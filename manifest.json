@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Smart Copy Helper",
+  "description": "Alt+click to copy word, sentence, or paragraph.",
+  "version": "1.0.0",
+  "permissions": ["storage","contextMenus","scripting"],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "https://api.mymemory.translated.net/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-activation": {
+      "suggested_key": { "default": "Alt+O" },
+      "description": "Toggle Smart Copy activation"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Smart Copy Helper"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
