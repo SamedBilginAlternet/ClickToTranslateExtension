@@ -61,7 +61,7 @@ async function handleSmartCopy(event) {
   await navigator.clipboard.writeText(textToCopy);
   const label = capitalize(copyMode);
   showToast(`${label} copied: "${shorten(textToCopy)}"`);
-  saveToHistory(textToCopy, copyMode);
+  await saveToHistory(textToCopy, copyMode);
   onCopiedForSidebar(textToCopy, copyMode);
 }
 
@@ -85,6 +85,7 @@ async function handleContextCopy(mode, respond) {
     if (!text) return;
     await navigator.clipboard.writeText(text);
     showToast(`${capitalize(mode)} copied`);
+    await saveToHistory(text, mode);
     onCopiedForSidebar(text, mode);
     // save history (see next section)
   } catch (e) {
@@ -218,15 +219,18 @@ function capitalize(s) {
 
 async function saveToHistory(text, mode) {
   try {
-    chrome.storage.local.get({ history: [] }, (res) => {
-      const history = res.history || [];
-      history.unshift({ text, mode, ts: Date.now() });
-      // keep max 20
-      const max = 20;
-      chrome.storage.local.set({ history: history.slice(0, max) });
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ history: [] }, (res) => {
+        const history = res.history || [];
+        const entry = { text, mode, ts: Date.now() };
+        history.unshift(entry);
+        // keep max 20
+        const max = 20;
+        chrome.storage.local.set({ history: history.slice(0, max) }, () => resolve(entry.ts));
+      });
     });
   } catch (e) {
-    // ignore
+    return null;
   }
 }
 
@@ -317,21 +321,54 @@ async function onCopiedForSidebar(text, mode) {
     const res = await storageGet({ targetLang: "tr" });
     const target = (res.targetLang || "tr").trim() || "tr";
     const msg = { type: "translate", text, mode, source: "en", target };
-
-    const result = await sendMessageSafe(msg, 4, 500);
+    // Try sending message; if the service worker restarted you may get
+    // 'Extension context invalidated' — in that case do one more retry with longer timeout.
+    let result = await sendMessageSafe(msg, 4, 500);
     if (!result.ok) {
       const errMsg = result.error || "unknown";
       console.warn("Translation request failed:", errMsg);
-      updateSidebar(text, `Translation request failed: ${errMsg}`, mode);
-    } else {
-      // background will still post translation-result; handle immediate errors if present
-      if (result.resp && result.resp.error) {
-        updateSidebar(text, `Translation error: ${result.resp.error}`, mode);
+      if ((errMsg || "").toLowerCase().includes("extension context invalidated")) {
+        // one more attempt with higher retries/delay
+        updateSidebar(text, "Background restarted — retrying translation…", mode);
+        result = await sendMessageSafe(msg, 6, 1000);
       }
+
+      if (!result.ok) {
+        const finalErr = result.error || "unknown";
+        updateSidebar(text, `Translation request failed: ${finalErr}`, mode);
+        return;
+      }
+    }
+
+    // If we get an immediate response that contains an error, show it; if it contains
+    // a translated string show it immediately. Otherwise the background will later
+    // post a `translation-result` message which we already handle.
+    if (result.resp && result.resp.error) {
+      updateSidebar(text, `Translation error: ${result.resp.error}`, mode);
+    } else if (result.resp && result.resp.translated) {
+      updateSidebar(text, result.resp.translated, mode);
     }
   } catch (e) {
     console.error("onCopiedForSidebar unexpected error:", e);
-    updateSidebar(text, `Client error: ${e && e.message ? e.message : String(e)}`, mode);
+    const msg = e && e.message ? e.message : String(e);
+    console.warn("onCopiedForSidebar caught:", msg);
+    if (msg.toLowerCase().includes("extension context invalidated")) {
+      // attempt a last-ditch retry
+      updateSidebar(text, "Client error: background restarted — retrying…", mode);
+      try {
+        const res2 = await storageGet({ targetLang: "tr" });
+        const target2 = (res2.targetLang || "tr").trim() || "tr";
+        const msg2 = { type: "translate", text, mode, source: "en", target: target2 };
+        const r2 = await sendMessageSafe(msg2, 6, 800);
+        if (r2.ok && r2.resp && r2.resp.translated) {
+          updateSidebar(text, r2.resp.translated, mode);
+          return;
+        }
+      } catch (e2) {
+        console.warn("retry also failed:", e2);
+      }
+    }
+    updateSidebar(text, `Client error: ${msg}`, mode);
   }
 }
 
@@ -339,6 +376,22 @@ async function onCopiedForSidebar(text, mode) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "translation-result") {
     updateSidebar(msg.original || "", msg.translated || msg.error || "", msg.mode || "sentence");
+    // persist translation into local history if present
+    try {
+      if (msg.original) {
+        chrome.storage.local.get({ history: [] }, (res) => {
+          const history = res.history || [];
+          const idx = history.findIndex(h => h.text === msg.original && !h.translated);
+          if (idx >= 0) {
+            history[idx].translated = msg.translated || "";
+            history[idx].translatedAt = Date.now();
+            chrome.storage.local.set({ history });
+          }
+        });
+      }
+    } catch (e) {
+      // ignore
+    }
   } else if (msg?.type === "activation-changed") {
     // existing message handling you may have
   }

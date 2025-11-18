@@ -75,21 +75,33 @@ async function myMemoryTranslate(text, src = "en", target = "tr") {
   return results.filter(Boolean).join(" ");
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg?.type !== "translate" || !msg.text) return;
+// Single translation message handler. Supports both content-script callers (sender.tab)
+// and popup callers (no sender.tab). When caller is popup we reply using sendResponse.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== "translate" || !msg.text) return false;
+
   (async () => {
     try {
       const src = msg.source || "en";
       const target = msg.target || "tr";
       console.debug("[background] translate request (MyMemory)", { len: msg.text.length, source: src, target });
       const translated = await myMemoryTranslate(msg.text, src, target);
+
       const payload = { type: "translation-result", original: msg.text, translated, mode: msg.mode || "sentence" };
-      if (sender.tab?.id) chrome.tabs.sendMessage(sender.tab.id, payload);
+
+      if (sender?.tab?.id) {
+        chrome.tabs.sendMessage(sender.tab.id, payload);
+      } else {
+        try { sendResponse(payload); } catch (e) { /* ignore */ }
+      }
     } catch (err) {
       console.error("[background] translation error:", err);
       const payload = { type: "translation-result", original: msg.text, translated: "", error: `Translation failed: ${String(err)}` };
-      if (sender.tab?.id) chrome.tabs.sendMessage(sender.tab.id, payload);
+      if (sender?.tab?.id) chrome.tabs.sendMessage(sender.tab.id, payload);
+      else try { sendResponse(payload); } catch (e) { /* ignore */ }
     }
   })();
+
+  // indicate we'll call sendResponse asynchronously
   return true;
 });

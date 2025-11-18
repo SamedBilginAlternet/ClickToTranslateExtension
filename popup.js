@@ -268,14 +268,81 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       for (const h of list) {
-        const btn = document.createElement("button");
-        btn.textContent = `${h.mode.toUpperCase()}: ${h.text.slice(0,60)}`;
-        btn.onclick = () => {
+        const item = document.createElement("div");
+        item.className = "history-item";
+        item.style.borderBottom = "1px solid #eee";
+        item.style.padding = "8px 6px";
+
+        const title = document.createElement("div");
+        title.style.fontWeight = "600";
+        title.style.fontSize = "13px";
+        title.textContent = `${h.mode.toUpperCase()}: ${h.text.slice(0,120)}`;
+
+        const actions = document.createElement("div");
+        actions.style.marginTop = "6px";
+
+        const copyBtn = document.createElement("button");
+        copyBtn.textContent = "Copy";
+        copyBtn.style.marginRight = "8px";
+        copyBtn.onclick = () => {
           navigator.clipboard.writeText(h.text);
           status.textContent = "Copied from history";
           setTimeout(()=>status.textContent="",900);
         };
-        historyEl.appendChild(btn);
+
+        const transBtn = document.createElement("button");
+        transBtn.textContent = h.translated ? "Re-translate" : "Translate";
+        transBtn.onclick = () => {
+          status.textContent = "Translating…";
+          // get current target lang then call background and update history
+          chrome.storage.sync.get(["targetLang"], (sres) => {
+            const target = (sres.targetLang || "tr").trim() || "tr";
+            chrome.runtime.sendMessage({ type: "translate", text: h.text, mode: h.mode, source: "en", target }, (resp) => {
+              if (chrome.runtime.lastError) {
+                status.textContent = `Translate failed: ${chrome.runtime.lastError.message}`;
+                setTimeout(()=>status.textContent="",2000);
+                return;
+              }
+              if (!resp) {
+                status.textContent = "No response from translator";
+                setTimeout(()=>status.textContent="",2000);
+                return;
+              }
+              // persist translation into local history by matching ts
+              chrome.storage.local.get({ history: [] }, (lres) => {
+                const history = lres.history || [];
+                const idx = history.findIndex(x => x.ts === h.ts);
+                if (idx >= 0) {
+                  history[idx].translated = resp.translated || "";
+                  history[idx].translatedAt = Date.now();
+                  chrome.storage.local.set({ history }, () => {
+                    status.textContent = "Translation saved";
+                    setTimeout(()=>status.textContent="",900);
+                    renderHistory();
+                  });
+                } else {
+                  status.textContent = "Could not find history entry to save";
+                  setTimeout(()=>status.textContent="",1200);
+                }
+              });
+            });
+          });
+        };
+
+        actions.appendChild(copyBtn);
+        actions.appendChild(transBtn);
+
+        item.appendChild(title);
+        if (h.translated) {
+          const tr = document.createElement("div");
+          tr.style.marginTop = "6px";
+          tr.style.color = "#333";
+          tr.style.fontSize = "13px";
+          tr.textContent = h.translated;
+          item.appendChild(tr);
+        }
+        item.appendChild(actions);
+        historyEl.appendChild(item);
       }
     });
   }
