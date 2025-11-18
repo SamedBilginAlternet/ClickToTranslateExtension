@@ -278,37 +278,33 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;");
 }
 
+// small promise wrapper for chrome.storage.sync.get
+function storageGet(keys) {
+  return new Promise((resolve) => chrome.storage.sync.get(keys, (res) => resolve(res)));
+}
+
 /* safe sendMessage with retries to avoid "Extension context invalidated" */
 async function sendMessageSafe(msg, retries = 3, delay = 400) {
   for (let i = 0; i < retries; i++) {
-    try {
-      const result = await new Promise((resolve) => {
-        try {
-          chrome.runtime.sendMessage(msg, (resp) => {
-            // chrome.runtime.lastError is set when the message failed
-            if (chrome.runtime.lastError) {
-              resolve({ error: chrome.runtime.lastError.message });
-            } else {
-              resolve({ resp });
-            }
-          });
-        } catch (e) {
-          // some environments may throw synchronously
-          resolve({ error: String(e) });
-        }
-      });
-
-      if (!result.error) return { ok: true, resp: result.resp };
-      // if error indicates extension worker restarting, retry
-      const errText = (result.error || "").toLowerCase();
-      if (errText.includes("extension context invalidated") || errText.includes("context invalidated") || i < retries - 1) {
-        await new Promise((r) => setTimeout(r, delay));
-        continue;
+    const result = await new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(msg, (resp) => {
+          if (chrome.runtime.lastError) resolve({ error: chrome.runtime.lastError.message });
+          else resolve({ resp });
+        });
+      } catch (e) {
+        resolve({ error: String(e) });
       }
-      return { ok: false, error: result.error };
-    } catch (e) {
-      if (i < retries - 1) await new Promise((r) => setTimeout(r, delay));
+    });
+
+    if (!result.error) return { ok: true, resp: result.resp };
+    const errText = (result.error || "").toLowerCase();
+    // retry on context invalidated or transient failures
+    if (errText.includes("extension context invalidated") || i < retries - 1) {
+      await new Promise((r) => setTimeout(r, delay));
+      continue;
     }
+    return { ok: false, error: result.error };
   }
   return { ok: false, error: "sendMessage failed after retries" };
 }
@@ -318,23 +314,21 @@ async function onCopiedForSidebar(text, mode) {
   try {
     updateSidebar(text, "Translating…", mode);
 
-    // read user-selected target language (default "tr")
-    chrome.storage.sync.get({ targetLang: "tr" }, async (res) => {
-      const target = (res.targetLang || "tr").trim() || "tr";
-      const msg = { type: "translate", text, mode, source: "en", target };
+    const res = await storageGet({ targetLang: "tr" });
+    const target = (res.targetLang || "tr").trim() || "tr";
+    const msg = { type: "translate", text, mode, source: "en", target };
 
-      const result = await sendMessageSafe(msg, 4, 500);
-      if (!result.ok) {
-        const errMsg = result.error || "unknown";
-        console.warn("Translation request failed:", errMsg);
-        updateSidebar(text, `Translation request failed: ${errMsg}`, mode);
-      } else {
-        // background will send translation-result when done
-        if (result.resp && result.resp.error) {
-          updateSidebar(text, `Translation error: ${result.resp.error}`, mode);
-        }
+    const result = await sendMessageSafe(msg, 4, 500);
+    if (!result.ok) {
+      const errMsg = result.error || "unknown";
+      console.warn("Translation request failed:", errMsg);
+      updateSidebar(text, `Translation request failed: ${errMsg}`, mode);
+    } else {
+      // background will still post translation-result; handle immediate errors if present
+      if (result.resp && result.resp.error) {
+        updateSidebar(text, `Translation error: ${result.resp.error}`, mode);
       }
-    });
+    }
   } catch (e) {
     console.error("onCopiedForSidebar unexpected error:", e);
     updateSidebar(text, `Client error: ${e && e.message ? e.message : String(e)}`, mode);

@@ -165,62 +165,103 @@ function shorten(text, max = 40) {
   return text.slice(0, max - 3) + "...";
 }
 
+const LANGS = [
+  ["tr","Turkish","🇹🇷"],["en","English","🇬🇧"],["es","Spanish","🇪🇸"],["fr","French","🇫🇷"],
+  ["de","German","🇩🇪"],["it","Italian","🇮🇹"],["pt","Portuguese","🇵🇹"],["ru","Russian","🇷🇺"],
+  ["zh","Chinese","🇨🇳"],["ja","Japanese","🇯🇵"],["ko","Korean","🇰🇷"],["ar","Arabic","🇸🇦"],
+  ["nl","Dutch","🇳🇱"],["sv","Swedish","🇸🇪"],["no","Norwegian","🇳🇴"],["pl","Polish","🇵🇱"]
+];
+
 document.addEventListener("DOMContentLoaded", () => {
   const radios = Array.from(document.querySelectorAll('input[name="mode"]'));
-  const status = document.createElement("div");
-  status.style.fontSize = "12px";
-  status.style.marginTop = "8px";
-  document.body.appendChild(status);
+  const langGrid = document.getElementById("langGrid");
+  const targetCustom = document.getElementById("targetCustom");
+  const saveBtn = document.getElementById("saveTarget");
+  const status = document.getElementById("status");
+  const historyEl = document.getElementById("history");
 
-  // Initialize radios from storage
-  chrome.storage.sync.get(["copyMode"], (res) => {
-    const mode = res.copyMode || "sentence";
-    radios.forEach((r) => (r.checked = r.value === mode));
-  });
-
-  // Update radios if storage changes
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes.copyMode) {
-      radios.forEach((r) => (r.checked = r.value === changes.copyMode.newValue));
+  // render language grid
+  function renderLangGrid(selected) {
+    langGrid.innerHTML = "";
+    for (const [code,name,flag] of LANGS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "lang-btn" + (selected===code ? " selected" : "");
+      b.innerHTML = `<span class="lang-flag">${flag}</span><div style="flex:1;text-align:left"><div style="font-weight:600">${code}</div><div style="font-size:11px;color:#666">${name}</div></div>`;
+      b.onclick = () => {
+        selectLang(code);
+      };
+      langGrid.appendChild(b);
     }
+  }
+
+  function selectLang(code){
+    targetCustom.value = code;
+    // visually select
+    Array.from(langGrid.children).forEach(btn => {
+      btn.classList.toggle("selected", btn.textContent.trim().startsWith(code));
+    });
+  }
+
+  // load saved state
+  chrome.storage.sync.get(["copyMode","targetLang"], (res) => {
+    const mode = res.copyMode || "sentence";
+    radios.forEach(r => r.checked = r.value === mode);
+    const t = res.targetLang || "tr";
+    targetCustom.value = t;
+    renderLangGrid(t);
   });
 
-  // Save when user changes mode
-  radios.forEach((r) => {
+  // save mode radio changes
+  radios.forEach(r => {
     r.addEventListener("change", () => {
       if (!r.checked) return;
       chrome.storage.sync.set({ copyMode: r.value }, () => {
         status.textContent = `Mode saved: ${r.value}`;
-        setTimeout(() => (status.textContent = ""), 1200);
+        setTimeout(()=>status.textContent="",1200);
       });
     });
   });
 
-  // History rendering (unchanged)
-  const histContainer = document.createElement("div");
-  histContainer.style.marginTop = "10px";
-  document.body.appendChild(histContainer);
+  // save target language
+  saveBtn.addEventListener("click", () => {
+    const v = (targetCustom.value || "").trim().toLowerCase();
+    if (!v) {
+      status.textContent = "Enter an ISO code first";
+      setTimeout(()=>status.textContent="",1200);
+      return;
+    }
+    chrome.storage.sync.set({ targetLang: v }, () => {
+      status.textContent = `Target saved: ${v}`;
+      renderLangGrid(v);
+      setTimeout(()=>status.textContent="",1200);
+    });
+  });
 
-  function renderHistory() {
+  // render history
+  function renderHistory(){
     chrome.storage.local.get({ history: [] }, (res) => {
-      histContainer.innerHTML = "<strong>History</strong>";
-      (res.history || []).forEach((h, i) => {
+      historyEl.innerHTML = "";
+      const list = (res.history || []).slice(0,8);
+      if (!list.length) {
+        historyEl.innerHTML = `<div style="color:#666;font-size:13px;margin-top:6px">No history yet</div>`;
+        return;
+      }
+      for (const h of list) {
         const btn = document.createElement("button");
-        btn.textContent = `${h.mode}: ${h.text.slice(0, 40)}`;
-        btn.style.display = "block";
-        btn.style.width = "100%";
-        btn.style.marginTop = "6px";
+        btn.textContent = `${h.mode.toUpperCase()}: ${h.text.slice(0,60)}`;
         btn.onclick = () => {
           navigator.clipboard.writeText(h.text);
           status.textContent = "Copied from history";
-          setTimeout(() => (status.textContent = ""), 1200);
+          setTimeout(()=>status.textContent="",900);
         };
-        histContainer.appendChild(btn);
-      });
+        historyEl.appendChild(btn);
+      }
     });
   }
 
   renderHistory();
+  // refresh history if storage changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.history) renderHistory();
   });
