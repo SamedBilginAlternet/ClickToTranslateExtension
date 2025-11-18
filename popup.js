@@ -166,10 +166,11 @@ function shorten(text, max = 40) {
 }
 
 const LANGS = [
-  ["tr","Turkish","🇹🇷"],["en","English","🇬🇧"],["es","Spanish","🇪🇸"],["fr","French","🇫🇷"],
-  ["de","German","🇩🇪"],["it","Italian","🇮🇹"],["pt","Portuguese","🇵🇹"],["ru","Russian","🇷🇺"],
-  ["zh","Chinese","🇨🇳"],["ja","Japanese","🇯🇵"],["ko","Korean","🇰🇷"],["ar","Arabic","🇸🇦"],
-  ["nl","Dutch","🇳🇱"],["sv","Swedish","🇸🇪"],["no","Norwegian","🇳🇴"],["pl","Polish","🇵🇱"]
+  // [langCode, displayName, countryCodeForFlag, emojiFallback]
+  ["tr","Turkish","tr","🇹🇷"],["en","English","gb","🇬🇧"],["es","Spanish","es","🇪🇸"],["fr","French","fr","🇫🇷"],
+  ["de","German","de","🇩🇪"],["it","Italian","it","🇮🇹"],["pt","Portuguese","pt","🇵🇹"],["ru","Russian","ru","🇷🇺"],
+  ["zh","Chinese","cn","🇨🇳"],["ja","Japanese","jp","🇯🇵"],["ko","Korean","kr","🇰🇷"],["ar","Arabic","sa","🇸🇦"],
+  ["nl","Dutch","nl","🇳🇱"],["sv","Swedish","se","🇸🇪"],["no","Norwegian","no","🇳🇴"],["pl","Polish","pl","🇵🇱"]
 ];
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -183,12 +184,32 @@ document.addEventListener("DOMContentLoaded", () => {
   // render language grid
   function renderLangGrid(selected) {
     langGrid.innerHTML = "";
-    for (const [code,name,flag] of LANGS) {
+    for (const [code,name,cc,emoji] of LANGS) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "lang-btn" + (selected===code ? " selected" : "");
-      b.innerHTML = `<span class="lang-flag">${flag}</span><div style="flex:1;text-align:left"><div style="font-weight:600">${code}</div><div style="font-size:11px;color:#666">${name}</div></div>`;
+      // build flag img + fallback emoji span
+      const img = document.createElement("img");
+      img.className = "lang-flag-img";
+      img.src = `flags/${cc}.png`;
+      img.alt = code;
+      img.onerror = () => {
+        img.style.display = "none";
+        emojiSpan.style.display = "inline";
+      };
+      const emojiSpan = document.createElement("span");
+      emojiSpan.className = "lang-flag-emoji";
+      emojiSpan.textContent = emoji;
+      // layout
+      const info = document.createElement("div");
+      info.style.flex = "1";
+      info.style.textAlign = "left";
+      info.innerHTML = `<div style="font-weight:600">${code}</div><div style="font-size:11px;color:#666">${name}</div>`;
+      b.appendChild(img);
+      b.appendChild(emojiSpan);
+      b.appendChild(info);
       b.onclick = () => {
+        targetCustom.value = code;
         selectLang(code);
       };
       langGrid.appendChild(b);
@@ -196,10 +217,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function selectLang(code){
-    targetCustom.value = code;
-    // visually select
     Array.from(langGrid.children).forEach(btn => {
-      btn.classList.toggle("selected", btn.textContent.trim().startsWith(code));
+      const txt = btn.querySelector("div")?.textContent || "";
+      btn.classList.toggle("selected", txt.trim().startsWith(code));
     });
   }
 
