@@ -2,13 +2,15 @@ let copyMode = "sentence"; // default
 let active = true; // default on; will read storage
 let doubleClickMode = true; // show meanings on double-click (default enabled)
 let doubleClickAction = "definition"; // "definition" | "translate"
+let darkMode = false; // dark mode for tooltips / sidebar
 
 // Load initial mode + activation
-chrome.storage.sync.get(["copyMode", "active", "doubleClickMode", "doubleClickAction"], (res) => {
+chrome.storage.sync.get(["copyMode", "active", "doubleClickMode", "doubleClickAction", "darkMode"], (res) => {
   if (res.copyMode) copyMode = res.copyMode;
   if (typeof res.active === "boolean") active = res.active;
   if (typeof res.doubleClickMode === "boolean") doubleClickMode = res.doubleClickMode;
   if (res.doubleClickAction) doubleClickAction = res.doubleClickAction;
+  if (typeof res.darkMode === "boolean") darkMode = res.darkMode;
 });
 
 // Listen for messages from background
@@ -26,9 +28,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.copyMode) {
     copyMode = changes.copyMode.newValue;
     } else if (area === "sync" && changes.doubleClickMode) {
-      doubleClickMode = changes.doubleClickMode.newValue;
-    } else if (area === "sync" && changes.doubleClickAction) {
-      doubleClickAction = changes.doubleClickAction.newValue;
+        doubleClickMode = changes.doubleClickMode.newValue;
+      } else if (area === "sync" && changes.doubleClickAction) {
+        doubleClickAction = changes.doubleClickAction.newValue;
+      } else if (area === "sync" && changes.darkMode) {
+        darkMode = !!changes.darkMode.newValue;
   }
 });
 
@@ -111,14 +115,17 @@ async function showDefinitionForWord(word, rect, anchorRange) {
     tooltip.id = "sch-dbl-tooltip";
     tooltip.dataset.original = word;
     tooltip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${escapeHtml(word)}</div><div style="font-size:13px;color:#111" id="sch-dbl-def">Loading…</div>`;
+    const ttBg = darkMode ? "rgba(18,24,32,0.96)" : "rgba(255,255,255,0.88)";
+    const ttColor = darkMode ? "#e6eef8" : "#111";
+    const ttShadow = darkMode ? "0 6px 20px rgba(0,0,0,0.6)" : "0 6px 20px rgba(0,0,0,0.12)";
     Object.assign(tooltip.style, {
       position: "fixed",
       zIndex: 2147483647,
-      background: "rgba(255,255,255,0.88)",
-      color: "#111",
+      background: ttBg,
+      color: ttColor,
       padding: "8px 10px",
       borderRadius: "8px",
-      boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+      boxShadow: ttShadow,
       maxWidth: "360px",
       fontSize: "13px",
       lineHeight: "1.28",
@@ -163,6 +170,7 @@ async function showDefinitionForWord(word, rect, anchorRange) {
 
     // fetch definition or request translation asynchronously based on action
     const defEl = tooltip.querySelector("#sch-dbl-def");
+    if (defEl) defEl.style.color = ttColor;
     // expose current word for translation-result handling
     window._sch_dbl_current = word;
 
@@ -486,18 +494,21 @@ function getCaretIndexWithin(container, range) {
 function showToast(message) {
   const toast = document.createElement("div");
   toast.textContent = message;
+  const toastBg = darkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.85)";
+  const toastColor = darkMode ? "#e6eef8" : "#fff";
   Object.assign(toast.style, {
     position: "fixed",
     bottom: "16px",
     right: "16px",
     padding: "6px 10px",
-    background: "rgba(0,0,0,0.85)",
-    color: "#fff",
+    background: toastBg,
+    color: toastColor,
     fontSize: "12px",
     borderRadius: "4px",
     zIndex: 2147483647,
     maxWidth: "320px",
     wordBreak: "break-word",
+    boxShadow: darkMode ? "0 6px 18px rgba(0,0,0,0.6)" : "0 6px 18px rgba(0,0,0,0.25)",
   });
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 1400);
@@ -534,16 +545,20 @@ function ensureSidebar() {
   if (document.getElementById("sch-sidebar")) return;
   const sb = document.createElement("div");
   sb.id = "sch-sidebar";
+  const sbBg = darkMode ? "#0f1724" : "#fff";
+  const sbColor = darkMode ? "#e6eef8" : "#111";
+  const sbBorder = darkMode ? "1px solid rgba(255,255,255,0.04)" : "1px solid rgba(0,0,0,0.12)";
+  const sbShadow = darkMode ? "0 8px 24px rgba(0,0,0,0.45)" : "0 8px 24px rgba(0,0,0,0.15)";
   Object.assign(sb.style, {
     position: "fixed",
     right: "8px",
     top: "60px",
     width: "360px",
     height: "60vh",
-    background: "#fff",
-    color: "#111",
-    border: "1px solid rgba(0,0,0,0.12)",
-    boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+    background: sbBg,
+    color: sbColor,
+    border: sbBorder,
+    boxShadow: sbShadow,
     zIndex: 2147483646,
     padding: "10px",
     overflow: "auto",
@@ -564,10 +579,12 @@ function ensureSidebar() {
 function updateSidebar(original, translated, mode) {
   ensureSidebar();
   const body = document.getElementById("sch-sidebar-body");
-  body.innerHTML = `<div style="font-size:12px;color:#666">Mode: ${mode}</div>
-    <div style="margin-top:6px"><strong>Original</strong><div>${escapeHtml(original)}</div></div>
+  const modeColor = darkMode ? '#9ca3af' : '#666';
+  const textColor = darkMode ? '#e6eef8' : '#111';
+  body.innerHTML = `<div style="font-size:12px;color:${modeColor}">Mode: ${mode}</div>
+    <div style="margin-top:6px;color:${textColor}"><strong>Original</strong><div>${escapeHtml(original)}</div></div>
     <hr />
-    <div><strong>Translation</strong><div>${escapeHtml(translated || "(no translation)")}</div></div>`;
+    <div style="color:${textColor}"><strong>Translation</strong><div>${escapeHtml(translated || "(no translation)")}</div></div>`;
 }
 
 function escapeHtml(s) {

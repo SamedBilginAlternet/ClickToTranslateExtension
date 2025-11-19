@@ -182,6 +182,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const historyEl = document.getElementById("history");
   const dblEnable = document.getElementById("dblEnable");
   const dblAction = document.getElementById("dblAction");
+  const darkCheckbox = document.getElementById("darkMode");
 
   // render language grid
   function renderLangGrid(selected) {
@@ -206,7 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const info = document.createElement("div");
       info.style.flex = "1";
       info.style.textAlign = "left";
-      info.innerHTML = `<div style="font-weight:600">${code}</div><div style="font-size:11px;color:#666">${name}</div>`;
+      info.innerHTML = `<div style="font-weight:600">${code}</div><div style="font-size:11px;color:var(--muted)">${name}</div>`;
       b.appendChild(img);
       b.appendChild(emojiSpan);
       b.appendChild(info);
@@ -226,7 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // load saved state
-  chrome.storage.sync.get(["copyMode","targetLang","doubleClickMode","doubleClickAction"], (res) => {
+  chrome.storage.sync.get(["copyMode","targetLang","doubleClickMode","doubleClickAction","darkMode"], (res) => {
     const mode = res.copyMode || "sentence";
     radios.forEach(r => r.checked = r.value === mode);
     const t = res.targetLang || "tr";
@@ -236,6 +237,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (typeof res.doubleClickMode === "boolean") dblEnable.checked = res.doubleClickMode;
       else dblEnable.checked = true;
       dblAction.value = res.doubleClickAction || "definition";
+      if (typeof res.darkMode === "boolean") {
+        darkCheckbox.checked = res.darkMode;
+        document.body.dataset.theme = res.darkMode ? "dark" : "";
+      }
     } catch (e) {
       // ignore if elements not present
     }
@@ -284,6 +289,16 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   }
+  if (darkCheckbox) {
+    darkCheckbox.addEventListener("change", () => {
+      const enabled = !!darkCheckbox.checked;
+      chrome.storage.sync.set({ darkMode: enabled }, () => {
+        document.body.dataset.theme = enabled ? "dark" : "";
+        status.textContent = `Dark mode ${enabled ? 'on' : 'off'}`;
+        setTimeout(()=>status.textContent="",1200);
+      });
+    });
+  }
 
   // render history
   function renderHistory(){
@@ -291,13 +306,13 @@ document.addEventListener("DOMContentLoaded", () => {
       historyEl.innerHTML = "";
       const list = (res.history || []).slice(0,8);
       if (!list.length) {
-        historyEl.innerHTML = `<div style="color:#666;font-size:13px;margin-top:6px">No history yet</div>`;
+        historyEl.innerHTML = `<div style="color:var(--muted);font-size:13px;margin-top:6px">No history yet</div>`;
         return;
       }
       for (const h of list) {
         const item = document.createElement("div");
         item.className = "history-item";
-        item.style.borderBottom = "1px solid #eee";
+        item.style.borderBottom = "1px solid var(--card-border)";
         item.style.padding = "8px 6px";
 
         const title = document.createElement("div");
@@ -363,7 +378,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (h.translated) {
           const tr = document.createElement("div");
           tr.style.marginTop = "6px";
-          tr.style.color = "#333";
+          tr.style.color = "var(--text)";
           tr.style.fontSize = "13px";
           tr.textContent = h.translated;
           item.appendChild(tr);
@@ -382,6 +397,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (changes.doubleClickMode && dblEnable) dblEnable.checked = changes.doubleClickMode.newValue;
       if (changes.doubleClickAction && dblAction) dblAction.value = changes.doubleClickAction.newValue;
       if (changes.copyMode) copyMode = changes.copyMode.newValue;
+      if (changes.darkMode && darkCheckbox) {
+        darkCheckbox.checked = !!changes.darkMode.newValue;
+        document.body.dataset.theme = changes.darkMode.newValue ? "dark" : "";
+      }
     }
   });
 });

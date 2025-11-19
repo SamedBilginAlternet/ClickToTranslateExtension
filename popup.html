@@ -5,24 +5,35 @@
     <title>Smart Copy Helper</title>
     <style>
       :root{
-        --bg:#fafafa; --card:#fff; --muted:#6b7280; --accent:#2563eb;
+        --card:#fff; --muted:#6b7280; --accent:#2563eb;
+        --text:#111; --card-border:rgba(0,0,0,0.06);
       }
-      html,body{margin:0;padding:12px;width:360px;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:#111}
+      body[data-theme="dark"]{
+        --bg:#0b1220; --card:#0f1724; --muted:#9ca3af; --accent:#60a5fa; --text:#e6eef8; --card-border:rgba(255,255,255,0.04);
+      }
+      *,*::before,*::after{box-sizing:border-box}
+      html,body{margin:0;padding:12px;max-width:360px;min-width:280px;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text)}
       h3{margin:0 0 10px;font-size:15px}
-      .card{background:var(--card);border-radius:8px;padding:10px;box-shadow:0 6px 18px rgba(16,24,40,0.06);margin-bottom:10px}
+      .card{background:var(--card);border-radius:8px;padding:10px;box-shadow:0 6px 18px rgba(16,24,40,0.06);margin-bottom:10px;width:100%;border:1px solid var(--card-border);color:var(--text)}
       .row{display:flex;gap:8px;align-items:center}
       .modes label{display:inline-flex;align-items:center;gap:8px;margin-right:8px}
       .hint{font-size:12px;color:var(--muted);margin-top:6px}
       .lang-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
-      .lang-btn{display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px;border:1px solid rgba(0,0,0,0.06);background:transparent;cursor:pointer;font-size:13px}
+      .lang-btn{display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px;border:1px solid var(--card-border);background:transparent;cursor:pointer;font-size:13px;width:100%;justify-content:flex-start}
       .lang-btn.selected{border-color:var(--accent);box-shadow:0 4px 12px rgba(37,99,235,0.08);background:linear-gradient(180deg,rgba(37,99,235,0.04),transparent)}
+      /* Dark-mode friendly selected button */
+      body[data-theme="dark"] .lang-btn.selected{border-color:var(--accent);box-shadow:0 4px 12px rgba(96,165,250,0.12);background:linear-gradient(180deg,rgba(96,165,250,0.06),rgba(255,255,255,0.01));}
       .lang-flag-img{width:20px;height:14px;object-fit:cover;border-radius:2px}
       .lang-flag-emoji{font-size:16px;display:none}
-      #targetCustom{width:100%;padding:6px;margin-top:6px;border-radius:6px;border:1px solid #e6e6e6}
+      #targetCustom{width:100%;padding:6px;margin-top:6px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text)}
+      input[type="radio"], input[type="checkbox"]{accent-color:var(--accent)}
+      select, input, button{font-family:inherit}
+      select{background:var(--card);color:var(--text);border:1px solid var(--card-border)}
       #saveTarget{margin-top:8px;padding:8px 10px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer}
       #status{font-size:12px;color:var(--muted);margin-top:8px}
       #history{margin-top:8px;max-height:140px;overflow:auto}
-      #history button{display:block;width:100%;text-align:left;padding:8px;border:1px solid #eee;border-radius:6px;margin-top:6px;background:#fff;cursor:pointer}
+      #history button{display:block;width:100%;text-align:left;padding:8px;border:1px solid var(--card-border);border-radius:6px;margin-top:6px;background:var(--card);color:var(--text);cursor:pointer}
+      small{color:var(--muted)}
     </style>
   </head>
   <body>
@@ -56,12 +67,20 @@
       </div>
       <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
         <label style="min-width:56px">Action:</label>
-        <select id="dblAction" style="flex:1;padding:6px;border-radius:6px;border:1px solid #e6e6e6">
+        <select id="dblAction" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--card-border)">
           <option value="definition">Definition</option>
           <option value="translate">Translate</option>
         </select>
       </div>
       <div class="hint">Double-click a word to show a transparent tooltip above it.</div>
+    </div>
+
+    <div class="card">
+      <strong>Appearance</strong>
+      <div style="margin-top:8px" class="row">
+        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="darkMode"> Dark mode</label>
+      </div>
+      <div class="hint">Toggle dark mode for popup and tooltips.</div>
     </div>
 
     <div class="card">
