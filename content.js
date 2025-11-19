@@ -72,7 +72,15 @@ document.addEventListener(
         rect = { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY, width: 0, height: 0 };
       }
 
-      showDefinitionForWord(word, rect);
+      // if selection exists, prefer that Range so tooltip can anchor to it
+      let anchorRange = null;
+      try {
+        const selObj = window.getSelection();
+        if (selObj && selObj.rangeCount) anchorRange = selObj.getRangeAt(0).cloneRange();
+      } catch (e) {
+        anchorRange = null;
+      }
+      showDefinitionForWord(word, rect, anchorRange);
     } catch (e) {
       console.error("dblclick handler error:", e);
     }
@@ -89,7 +97,7 @@ document.addEventListener("click", (e) => {
 
 let _sch_dbl_timeout = null;
 
-async function showDefinitionForWord(word, rect) {
+async function showDefinitionForWord(word, rect, anchorRange) {
   try {
     // remove any existing tooltip
     const existing = document.getElementById("sch-dbl-tooltip");
@@ -119,6 +127,22 @@ async function showDefinitionForWord(word, rect) {
     });
 
     document.body.appendChild(tooltip);
+    // remember original rect for repositioning later
+    tooltip.dataset.rectTop = String(rect.top || 0);
+    tooltip.dataset.rectBottom = String(rect.bottom || 0);
+
+    // create a precise Range that covers the word so we can follow it
+    try {
+      const wordRange = getRangeForWord(anchorRange);
+      if (wordRange) {
+        window._sch_dbl_range = wordRange;
+        startTooltipFollow(tooltip, wordRange);
+      } else {
+        window._sch_dbl_range = null;
+      }
+    } catch (e) {
+      window._sch_dbl_range = null;
+    }
     // remember original rect for repositioning later
     tooltip.dataset.rectTop = String(rect.top || 0);
     tooltip.dataset.rectBottom = String(rect.bottom || 0);
@@ -172,6 +196,7 @@ async function showDefinitionForWord(word, rect) {
 
     // auto-dismiss after 7s
     _sch_dbl_timeout = setTimeout(() => {
+      stopTooltipFollow();
       tooltip.remove();
       window._sch_dbl_current = null;
       _sch_dbl_timeout = null;
@@ -179,6 +204,95 @@ async function showDefinitionForWord(word, rect) {
   } catch (e) {
     console.error("showDefinitionForWord error:", e);
   }
+}
+
+function stopTooltipFollow() {
+  try {
+    if (window._sch_dbl_raf) {
+      cancelAnimationFrame(window._sch_dbl_raf);
+      window._sch_dbl_raf = null;
+    }
+  } catch (e) {
+    // ignore
+  }
+  try {
+    window._sch_dbl_range = null;
+  } catch (e) {}
+}
+
+function startTooltipFollow(tooltip, range) {
+  stopTooltipFollow();
+  function update() {
+    try {
+      if (!tooltip || !document.body.contains(tooltip)) {
+        stopTooltipFollow();
+        return;
+      }
+      if (!range) return;
+      let r = null;
+      try {
+        r = range.getBoundingClientRect();
+      } catch (e) {
+        // Range may be detached
+        stopTooltipFollow();
+        return;
+      }
+      const ttRect = tooltip.getBoundingClientRect();
+      const pad = 8;
+      const centerX = (r.left + (r.width || 0) / 2) || r.left || (r.right || 0);
+      let left = Math.round(centerX - ttRect.width / 2);
+      left = Math.max(pad, Math.min(left, window.innerWidth - ttRect.width - pad));
+      let top = Math.round(r.top - ttRect.height - 10);
+      if (top < 8) top = Math.round(r.bottom + 10);
+      tooltip.style.left = left + "px";
+      tooltip.style.top = top + "px";
+    } catch (e) {
+      // ignore positioning errors
+    }
+    window._sch_dbl_raf = requestAnimationFrame(update);
+  }
+  window._sch_dbl_raf = requestAnimationFrame(update);
+}
+
+function getRangeForWord(anchorRange) {
+  if (!anchorRange) return null;
+  try {
+    // If the anchorRange already spans text and is more than whitespace, try to use it
+    if (anchorRange.startContainer && anchorRange.startContainer.nodeType === Node.TEXT_NODE) {
+      const node = anchorRange.startContainer;
+      let index = anchorRange.startOffset;
+      // if selection is not collapsed and contains the word, adjust index to selection start
+      if (!anchorRange.collapsed) index = anchorRange.startOffset || 0;
+
+      const text = node.data || "";
+      let start = Math.max(0, Math.min(index, text.length));
+      while (start > 0 && !/\s/.test(text[start - 1])) start--;
+      let end = index;
+      // if selection had length, consider end at selection end
+      if (!anchorRange.collapsed) end = anchorRange.endOffset || index;
+      while (end < text.length && !/\s/.test(text[end])) end++;
+
+      const r = document.createRange();
+      r.setStart(node, start);
+      r.setEnd(node, end);
+      return r;
+    }
+    // fallback: if startContainer is element node, try to find nearest text node
+    let node = anchorRange.startContainer;
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      // search forward for a text node
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null, false);
+      const tn = walker.nextNode();
+      if (tn) {
+        const r = document.createRange();
+        r.selectNodeContents(tn);
+        return r;
+      }
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
 }
 
 async function fetchDefinition(word) {
