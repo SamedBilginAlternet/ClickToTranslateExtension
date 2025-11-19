@@ -1,10 +1,12 @@
 let copyMode = "sentence"; // default
 let active = true; // default on; will read storage
+let doubleClickMode = true; // show meanings on double-click (default enabled)
 
 // Load initial mode + activation
-chrome.storage.sync.get(["copyMode", "active"], (res) => {
+chrome.storage.sync.get(["copyMode", "active", "doubleClickMode"], (res) => {
   if (res.copyMode) copyMode = res.copyMode;
   if (typeof res.active === "boolean") active = res.active;
+  if (typeof res.doubleClickMode === "boolean") doubleClickMode = res.doubleClickMode;
 });
 
 // Listen for messages from background
@@ -21,8 +23,158 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.copyMode) {
     copyMode = changes.copyMode.newValue;
+  } else if (area === "sync" && changes.doubleClickMode) {
+    doubleClickMode = changes.doubleClickMode.newValue;
   }
 });
+
+// Double-click handler: show meaning tooltip above the word
+document.addEventListener(
+  "dblclick",
+  (event) => {
+    try {
+      if (!active || !doubleClickMode) return;
+
+      // prefer user selection if present
+      const sel = window.getSelection()?.toString()?.trim();
+      let word = sel && sel.length ? sel : null;
+
+      if (!word) {
+        const range = getCaretRangeFromPoint(event.clientX, event.clientY);
+        if (!range) return;
+        word = getWordFromRange(range);
+      }
+
+      word = (word || "").trim();
+      if (!word) return;
+
+      // only single words (no spaces)
+      if (/\s/.test(word)) {
+        // do nothing for multi-word selections
+        return;
+      }
+
+      // compute rect for positioning
+      let rect = null;
+      try {
+        const r = window.getSelection()?.getRangeAt(0) || null;
+        if (r) rect = r.getBoundingClientRect();
+      } catch (e) {
+        rect = null;
+      }
+
+      // fallback to mouse point
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
+        rect = { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY, width: 0, height: 0 };
+      }
+
+      showDefinitionForWord(word, rect);
+    } catch (e) {
+      console.error("dblclick handler error:", e);
+    }
+  },
+  true
+);
+
+// remove tooltip on any interaction
+document.addEventListener("click", (e) => {
+  const t = document.getElementById("sch-dbl-tooltip");
+  if (t) t.remove();
+}, true);
+
+let _sch_dbl_timeout = null;
+
+async function showDefinitionForWord(word, rect) {
+  try {
+    // remove any existing tooltip
+    const existing = document.getElementById("sch-dbl-tooltip");
+    if (existing) existing.remove();
+    if (_sch_dbl_timeout) {
+      clearTimeout(_sch_dbl_timeout);
+      _sch_dbl_timeout = null;
+    }
+
+    const tooltip = document.createElement("div");
+    tooltip.id = "sch-dbl-tooltip";
+    tooltip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${escapeHtml(word)}</div><div style="font-size:13px;color:#111" id="sch-dbl-def">Loading…</div>`;
+    Object.assign(tooltip.style, {
+      position: "fixed",
+      zIndex: 2147483647,
+      background: "#fff",
+      color: "#111",
+      padding: "8px 10px",
+      borderRadius: "8px",
+      boxShadow: "0 6px 20px rgba(0,0,0,0.18)",
+      maxWidth: "360px",
+      fontSize: "13px",
+      lineHeight: "1.28",
+      pointerEvents: "auto",
+    });
+
+    document.body.appendChild(tooltip);
+
+    // measure and position
+    const pad = 8;
+    const ttRect = tooltip.getBoundingClientRect();
+    const centerX = (rect.left + (rect.width || 0) / 2) || rect.left || (rect.right || 0);
+    let left = Math.round(centerX - ttRect.width / 2);
+    left = Math.max(pad, Math.min(left, window.innerWidth - ttRect.width - pad));
+    // prefer above the selection
+    let top = Math.round(rect.top - ttRect.height - 10);
+    if (top < 8) {
+      top = Math.round(rect.bottom + 10);
+    }
+    tooltip.style.left = left + "px";
+    tooltip.style.top = top + "px";
+
+    // fetch definition asynchronously
+    const defEl = tooltip.querySelector("#sch-dbl-def");
+    fetchDefinition(word).then((defText) => {
+      if (!defText) defEl.textContent = "(no definition found)";
+      else defEl.textContent = defText;
+      // reposition in case height changed
+      const newRect = tooltip.getBoundingClientRect();
+      let newTop = Math.round(rect.top - newRect.height - 10);
+      if (newTop < 8) newTop = Math.round(rect.bottom + 10);
+      tooltip.style.top = newTop + "px";
+    }).catch((err) => {
+      console.warn("definition fetch failed", err);
+      defEl.textContent = "(definition fetch failed)";
+    });
+
+    // auto-dismiss after 7s
+    _sch_dbl_timeout = setTimeout(() => {
+      tooltip.remove();
+      _sch_dbl_timeout = null;
+    }, 7000);
+  } catch (e) {
+    console.error("showDefinitionForWord error:", e);
+  }
+}
+
+async function fetchDefinition(word) {
+  try {
+    // use free Dictionary API
+    const api = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+    const res = await fetch(api, { method: "GET", headers: { Accept: "application/json" } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || !data.length) return null;
+    // collect first few definitions
+    const meanings = data[0].meanings || [];
+    const defs = [];
+    for (const m of meanings) {
+      for (const d of (m.definitions || [])) {
+        if (d.definition) defs.push(d.definition);
+        if (defs.length >= 3) break;
+      }
+      if (defs.length >= 3) break;
+    }
+    return defs.join(" — ");
+  } catch (e) {
+    return null;
+  }
+}
 
 // Global Alt+Click handler
 document.addEventListener(
