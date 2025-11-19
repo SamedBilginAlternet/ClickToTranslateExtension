@@ -180,6 +180,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const saveBtn = document.getElementById("saveTarget");
   const status = document.getElementById("status");
   const historyEl = document.getElementById("history");
+  const dblEnable = document.getElementById("dblEnable");
+  const dblAction = document.getElementById("dblAction");
 
   // render language grid
   function renderLangGrid(selected) {
@@ -224,12 +226,19 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // load saved state
-  chrome.storage.sync.get(["copyMode","targetLang"], (res) => {
+  chrome.storage.sync.get(["copyMode","targetLang","doubleClickMode","doubleClickAction"], (res) => {
     const mode = res.copyMode || "sentence";
     radios.forEach(r => r.checked = r.value === mode);
     const t = res.targetLang || "tr";
     targetCustom.value = t;
     renderLangGrid(t);
+    try {
+      if (typeof res.doubleClickMode === "boolean") dblEnable.checked = res.doubleClickMode;
+      else dblEnable.checked = true;
+      dblAction.value = res.doubleClickAction || "definition";
+    } catch (e) {
+      // ignore if elements not present
+    }
   });
 
   // save mode radio changes
@@ -257,6 +266,24 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(()=>status.textContent="",1200);
     });
   });
+
+  // double-click controls
+  if (dblEnable) {
+    dblEnable.addEventListener("change", () => {
+      chrome.storage.sync.set({ doubleClickMode: !!dblEnable.checked }, () => {
+        status.textContent = `Double-click ${dblEnable.checked ? 'enabled' : 'disabled'}`;
+        setTimeout(()=>status.textContent="",1200);
+      });
+    });
+  }
+  if (dblAction) {
+    dblAction.addEventListener("change", () => {
+      chrome.storage.sync.set({ doubleClickAction: dblAction.value }, () => {
+        status.textContent = `Double-click action: ${dblAction.value}`;
+        setTimeout(()=>status.textContent="",1200);
+      });
+    });
+  }
 
   // render history
   function renderHistory(){
@@ -348,8 +375,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   renderHistory();
-  // refresh history if storage changes
+  // refresh history and update double-click controls if storage changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.history) renderHistory();
+    if (area === "sync") {
+      if (changes.doubleClickMode && dblEnable) dblEnable.checked = changes.doubleClickMode.newValue;
+      if (changes.doubleClickAction && dblAction) dblAction.value = changes.doubleClickAction.newValue;
+      if (changes.copyMode) copyMode = changes.copyMode.newValue;
+    }
   });
 });

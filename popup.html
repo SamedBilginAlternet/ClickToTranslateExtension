@@ -50,6 +50,21 @@
     </div>
 
     <div class="card">
+      <strong>Double-click</strong>
+      <div style="margin-top:8px" class="row">
+        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="dblEnable"> Enable double-click</label>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+        <label style="min-width:56px">Action:</label>
+        <select id="dblAction" style="flex:1;padding:6px;border-radius:6px;border:1px solid #e6e6e6">
+          <option value="definition">Definition</option>
+          <option value="translate">Translate</option>
+        </select>
+      </div>
+      <div class="hint">Double-click a word to show a transparent tooltip above it.</div>
+    </div>
+
+    <div class="card">
       <strong>History</strong>
       <div id="history"></div>
     </div>

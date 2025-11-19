@@ -1,12 +1,14 @@
 let copyMode = "sentence"; // default
 let active = true; // default on; will read storage
 let doubleClickMode = true; // show meanings on double-click (default enabled)
+let doubleClickAction = "definition"; // "definition" | "translate"
 
 // Load initial mode + activation
-chrome.storage.sync.get(["copyMode", "active", "doubleClickMode"], (res) => {
+chrome.storage.sync.get(["copyMode", "active", "doubleClickMode", "doubleClickAction"], (res) => {
   if (res.copyMode) copyMode = res.copyMode;
   if (typeof res.active === "boolean") active = res.active;
   if (typeof res.doubleClickMode === "boolean") doubleClickMode = res.doubleClickMode;
+  if (res.doubleClickAction) doubleClickAction = res.doubleClickAction;
 });
 
 // Listen for messages from background
@@ -23,8 +25,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.copyMode) {
     copyMode = changes.copyMode.newValue;
-  } else if (area === "sync" && changes.doubleClickMode) {
-    doubleClickMode = changes.doubleClickMode.newValue;
+    } else if (area === "sync" && changes.doubleClickMode) {
+      doubleClickMode = changes.doubleClickMode.newValue;
+    } else if (area === "sync" && changes.doubleClickAction) {
+      doubleClickAction = changes.doubleClickAction.newValue;
   }
 });
 
@@ -80,6 +84,7 @@ document.addEventListener(
 document.addEventListener("click", (e) => {
   const t = document.getElementById("sch-dbl-tooltip");
   if (t) t.remove();
+  window._sch_dbl_current = null;
 }, true);
 
 let _sch_dbl_timeout = null;
@@ -96,22 +101,27 @@ async function showDefinitionForWord(word, rect) {
 
     const tooltip = document.createElement("div");
     tooltip.id = "sch-dbl-tooltip";
+    tooltip.dataset.original = word;
     tooltip.innerHTML = `<div style="font-weight:600;margin-bottom:6px">${escapeHtml(word)}</div><div style="font-size:13px;color:#111" id="sch-dbl-def">Loading…</div>`;
     Object.assign(tooltip.style, {
       position: "fixed",
       zIndex: 2147483647,
-      background: "#fff",
+      background: "rgba(255,255,255,0.88)",
       color: "#111",
       padding: "8px 10px",
       borderRadius: "8px",
-      boxShadow: "0 6px 20px rgba(0,0,0,0.18)",
+      boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
       maxWidth: "360px",
       fontSize: "13px",
       lineHeight: "1.28",
       pointerEvents: "auto",
+      backdropFilter: "saturate(120%) blur(4px)",
     });
 
     document.body.appendChild(tooltip);
+    // remember original rect for repositioning later
+    tooltip.dataset.rectTop = String(rect.top || 0);
+    tooltip.dataset.rectBottom = String(rect.bottom || 0);
 
     // measure and position
     const pad = 8;
@@ -127,24 +137,43 @@ async function showDefinitionForWord(word, rect) {
     tooltip.style.left = left + "px";
     tooltip.style.top = top + "px";
 
-    // fetch definition asynchronously
+    // fetch definition or request translation asynchronously based on action
     const defEl = tooltip.querySelector("#sch-dbl-def");
-    fetchDefinition(word).then((defText) => {
-      if (!defText) defEl.textContent = "(no definition found)";
-      else defEl.textContent = defText;
-      // reposition in case height changed
-      const newRect = tooltip.getBoundingClientRect();
-      let newTop = Math.round(rect.top - newRect.height - 10);
-      if (newTop < 8) newTop = Math.round(rect.bottom + 10);
-      tooltip.style.top = newTop + "px";
-    }).catch((err) => {
-      console.warn("definition fetch failed", err);
-      defEl.textContent = "(definition fetch failed)";
-    });
+    // expose current word for translation-result handling
+    window._sch_dbl_current = word;
+
+    if (doubleClickAction === "translate") {
+      defEl.textContent = "Translating…";
+      // ask background to translate; background will post back a translation-result message
+      storageGet({ targetLang: "tr" }).then((res) => {
+        const target = (res.targetLang || "tr").trim() || "tr";
+        try {
+          chrome.runtime.sendMessage({ type: "translate", text: word, mode: "word", source: "en", target });
+        } catch (e) {
+          console.warn("translate sendMessage failed", e);
+          defEl.textContent = "(translate request failed)";
+        }
+      });
+    } else {
+      // definition
+      fetchDefinition(word).then((defText) => {
+        if (!defText) defEl.textContent = "(no definition found)";
+        else defEl.textContent = defText;
+        // reposition in case height changed
+        const newRect = tooltip.getBoundingClientRect();
+        let newTop = Math.round(rect.top - newRect.height - 10);
+        if (newTop < 8) newTop = Math.round(rect.bottom + 10);
+        tooltip.style.top = newTop + "px";
+      }).catch((err) => {
+        console.warn("definition fetch failed", err);
+        defEl.textContent = "(definition fetch failed)";
+      });
+    }
 
     // auto-dismiss after 7s
     _sch_dbl_timeout = setTimeout(() => {
       tooltip.remove();
+      window._sch_dbl_current = null;
       _sch_dbl_timeout = null;
     }, 7000);
   } catch (e) {
@@ -528,6 +557,26 @@ async function onCopiedForSidebar(text, mode) {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "translation-result") {
     updateSidebar(msg.original || "", msg.translated || msg.error || "", msg.mode || "sentence");
+    // If a double-click tooltip exists for the same original word, update it as well
+    try {
+      const cur = window._sch_dbl_current || null;
+      const tt = document.getElementById("sch-dbl-tooltip");
+      if (tt && cur && msg.original && cur === msg.original) {
+        const defEl = tt.querySelector("#sch-dbl-def");
+        if (defEl) {
+          defEl.textContent = msg.translated || msg.error || "(no translation)";
+          // reposition
+          const newRect = tt.getBoundingClientRect();
+          let newTop = Math.round((tt.dataset.rectTop ? Number(tt.dataset.rectTop) : 0) - newRect.height - 10);
+          if (!newTop || newTop < 8) newTop = Math.round((tt.dataset.rectBottom ? Number(tt.dataset.rectBottom) : 0) + 10);
+          tt.style.top = newTop + "px";
+        }
+        // clear current marker after update
+        window._sch_dbl_current = null;
+      }
+    } catch (e) {
+      // ignore
+    }
     // persist translation into local history if present
     try {
       if (msg.original) {
