@@ -332,6 +332,46 @@ document.addEventListener("DOMContentLoaded", () => {
           setTimeout(()=>status.textContent="",900);
         };
 
+        const goBtn = document.createElement("button");
+        goBtn.textContent = "Go";
+        goBtn.style.marginRight = "8px";
+        goBtn.onclick = () => {
+          // navigate to the page and highlight text
+          goToEntry(h);
+        };
+
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Edit note";
+        editBtn.style.marginRight = "8px";
+        editBtn.onclick = () => {
+          const current = h.note || "";
+          const v = prompt("Edit note for this entry:", current);
+          if (v === null) return;
+          chrome.storage.local.get({ history: [] }, (lres) => {
+            const history = lres.history || [];
+            const idx = history.findIndex(x => x.ts === h.ts);
+            if (idx >= 0) {
+              history[idx].note = v;
+              chrome.storage.local.set({ history }, () => {
+                status.textContent = "Note saved";
+                setTimeout(()=>status.textContent="",900);
+                renderHistory();
+              });
+            }
+          });
+        };
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "Delete";
+        delBtn.style.marginRight = "8px";
+        delBtn.onclick = () => {
+          if (!confirm("Delete this history entry?")) return;
+          chrome.storage.local.get({ history: [] }, (lres) => {
+            const history = (lres.history || []).filter(x => x.ts !== h.ts);
+            chrome.storage.local.set({ history }, () => { renderHistory(); });
+          });
+        };
+
         const transBtn = document.createElement("button");
         transBtn.textContent = h.translated ? "Re-translate" : "Translate";
         transBtn.onclick = () => {
@@ -371,10 +411,22 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         };
 
+        actions.appendChild(goBtn);
         actions.appendChild(copyBtn);
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
         actions.appendChild(transBtn);
 
         item.appendChild(title);
+        if (h.note) {
+          const noteEl = document.createElement("div");
+          noteEl.style.marginTop = "6px";
+          noteEl.style.color = "var(--muted)";
+          noteEl.style.fontSize = "12px";
+          noteEl.textContent = `Note: ${h.note}`;
+          item.appendChild(noteEl);
+        }
+
         if (h.translated) {
           const tr = document.createElement("div");
           tr.style.marginTop = "6px";
@@ -390,6 +442,80 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   renderHistory();
+  const openHistoryBtn = document.getElementById('openHistoryBtn');
+  const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+  if (openHistoryBtn) {
+    openHistoryBtn.addEventListener('click', () => {
+      const url = chrome.runtime.getURL('history.html');
+      chrome.tabs.create({ url });
+      window.close();
+    });
+  }
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', () => {
+      if (!confirm('Clear all history?')) return;
+      chrome.storage.local.set({ history: [] }, () => { renderHistory(); });
+    });
+  }
+  // helper: navigate to entry.url and highlight text in the page
+  function normalizeUrl(u){
+    try{ const o = new URL(u); return o.origin + o.pathname; }catch(e){ return u; }
+  }
+  function goToEntry(entry) {
+    chrome.tabs.query({}, (tabs) => {
+      const curTab = tabs.find(t => t.active && t.windowId !== undefined && t.highlighted) || null;
+      const targetNorm = normalizeUrl(entry.url || "");
+      // try to find an already-open tab matching the same origin+path
+      const existing = tabs.find(t => {
+        try { return t.url && normalizeUrl(t.url) === targetNorm; } catch(e){ return false; }
+      });
+
+      if (existing && existing.id) {
+        // focus the tab and send highlight
+        chrome.tabs.update(existing.id, { active: true }, () => {
+          chrome.windows.update(existing.windowId, { focused: true }, () => {
+            chrome.tabs.sendMessage(existing.id, { type: 'highlight-text', text: entry.text });
+            window.close();
+          });
+        });
+        return;
+      }
+
+      // otherwise navigate the current active tab to the URL (so we don't spawn a new tab)
+      chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+        const activeTab = activeTabs && activeTabs[0];
+        if (activeTab && activeTab.id) {
+          // update current tab to the history URL
+          chrome.tabs.update(activeTab.id, { url: entry.url }, (updated) => {
+            if (!updated || !updated.id) return;
+            const tabId = updated.id;
+            const onUpdated = (tId, changeInfo) => {
+              if (tId === tabId && changeInfo.status === 'complete') {
+                chrome.tabs.onUpdated.removeListener(onUpdated);
+                chrome.tabs.sendMessage(tabId, { type: 'highlight-text', text: entry.text });
+                window.close();
+              }
+            };
+            chrome.tabs.onUpdated.addListener(onUpdated);
+          });
+        } else {
+          // fallback: create a new tab
+          chrome.tabs.create({ url: entry.url }, (tab) => {
+            if (!tab || !tab.id) return;
+            const tabId = tab.id;
+            const onUpdated = (tId, changeInfo) => {
+              if (tId === tabId && changeInfo.status === 'complete') {
+                chrome.tabs.onUpdated.removeListener(onUpdated);
+                chrome.tabs.sendMessage(tabId, { type: 'highlight-text', text: entry.text });
+                window.close();
+              }
+            };
+            chrome.tabs.onUpdated.addListener(onUpdated);
+          });
+        }
+      });
+    });
+  }
   // refresh history and update double-click controls if storage changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.history) renderHistory();

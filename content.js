@@ -32,7 +32,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
       } else if (area === "sync" && changes.doubleClickAction) {
         doubleClickAction = changes.doubleClickAction.newValue;
       } else if (area === "sync" && changes.darkMode) {
-        darkMode = !!changes.darkMode.newValue;
+      darkMode = !!changes.darkMode.newValue;
+      try { applyThemeToOpenUIs(darkMode); } catch (e) {}
   }
 });
 
@@ -84,7 +85,7 @@ document.addEventListener(
       } catch (e) {
         anchorRange = null;
       }
-      showDefinitionForWord(word, rect, anchorRange);
+          showDefinitionForWord(word, rect, anchorRange);
     } catch (e) {
       console.error("dblclick handler error:", e);
     }
@@ -493,10 +494,17 @@ function getCaretIndexWithin(container, range) {
 
 function showToast(message) {
   const toast = document.createElement("div");
+  toast.className = "sch-toast";
   toast.textContent = message;
+  applyThemeToToast(toast);
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 1400);
+}
+
+function applyThemeToToast(toastEl) {
   const toastBg = darkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.85)";
   const toastColor = darkMode ? "#e6eef8" : "#fff";
-  Object.assign(toast.style, {
+  Object.assign(toastEl.style, {
     position: "fixed",
     bottom: "16px",
     right: "16px",
@@ -510,8 +518,42 @@ function showToast(message) {
     wordBreak: "break-word",
     boxShadow: darkMode ? "0 6px 18px rgba(0,0,0,0.6)" : "0 6px 18px rgba(0,0,0,0.25)",
   });
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 1400);
+}
+
+function applyThemeToOpenUIs(dark) {
+  try {
+    // tooltip
+    const tt = document.getElementById("sch-dbl-tooltip");
+    if (tt) {
+      const bg = dark ? "rgba(18,24,32,0.96)" : "rgba(255,255,255,0.88)";
+      const color = dark ? "#e6eef8" : "#111";
+      const shadow = dark ? "0 6px 20px rgba(0,0,0,0.6)" : "0 6px 20px rgba(0,0,0,0.12)";
+      tt.style.background = bg;
+      tt.style.color = color;
+      tt.style.boxShadow = shadow;
+      const def = tt.querySelector('#sch-dbl-def');
+      if (def) def.style.color = color;
+    }
+
+    // sidebar
+    const sb = document.getElementById('sch-sidebar');
+    if (sb) {
+      const sbBg = dark ? '#0f1724' : '#fff';
+      const sbColor = dark ? '#e6eef8' : '#111';
+      const sbBorder = dark ? '1px solid rgba(255,255,255,0.04)' : '1px solid rgba(0,0,0,0.12)';
+      const sbShadow = dark ? '0 8px 24px rgba(0,0,0,0.45)' : '0 8px 24px rgba(0,0,0,0.15)';
+      sb.style.background = sbBg;
+      sb.style.color = sbColor;
+      sb.style.border = sbBorder;
+      sb.style.boxShadow = sbShadow;
+    }
+
+    // update any existing toasts
+    const toasts = Array.from(document.querySelectorAll('.sch-toast'));
+    toasts.forEach(t => applyThemeToToast(t));
+  } catch (e) {
+    // ignore
+  }
 }
 
 function shorten(text, max = 40) {
@@ -528,7 +570,7 @@ async function saveToHistory(text, mode) {
     return new Promise((resolve) => {
       chrome.storage.local.get({ history: [] }, (res) => {
         const history = res.history || [];
-        const entry = { text, mode, ts: Date.now() };
+        const entry = { text, mode, ts: Date.now(), url: location.href, title: document.title || "" };
         history.unshift(entry);
         // keep max 20
         const max = 20;
@@ -728,3 +770,91 @@ chrome.runtime.onMessage.addListener((msg) => {
     // existing message handling you may have
   }
 });
+
+// respond to highlight requests from popup: scroll/highlight first occurrence of the provided text
+chrome.runtime.onMessage.addListener((msg, _sender) => {
+  try {
+    if (msg?.type === "highlight-text" && msg.text) {
+      const text = String(msg.text || "").trim();
+      if (!text) return;
+      highlightTextAndScroll(text);
+    }
+  } catch (e) {
+    console.warn("highlight-text handler error", e);
+  }
+});
+
+function highlightTextAndScroll(text) {
+  try {
+    // remove previous temporary highlight
+    const prev = document.getElementById("sch-hl-temp");
+    if (prev) prev.remove();
+
+    // Find text in text nodes
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    let txtNode;
+    let found = null;
+    while ((txtNode = walker.nextNode())) {
+      const idx = txtNode.data.indexOf(text);
+      if (idx >= 0) {
+        found = { node: txtNode, idx };
+        break;
+      }
+    }
+    if (!found) {
+      // try case-insensitive search
+      walker.currentNode = document.body;
+      while ((txtNode = walker.nextNode())) {
+        const idx = txtNode.data.toLowerCase().indexOf(text.toLowerCase());
+        if (idx >= 0) {
+          found = { node: txtNode, idx };
+          break;
+        }
+      }
+    }
+    if (!found) return;
+
+    const { node: foundNode, idx } = found;
+    const range = document.createRange();
+    range.setStart(foundNode, idx);
+    range.setEnd(foundNode, idx + text.length);
+    const wrap = document.createElement("span");
+    wrap.id = "sch-hl-temp";
+    wrap.style.background = "rgba(255,230,100,0.95)";
+    wrap.style.color = "#000";
+    wrap.style.borderRadius = "4px";
+    wrap.style.padding = "0 3px";
+    try {
+      range.surroundContents(wrap);
+    } catch (e) {
+      // If surroundContents fails due to partial nodes, fallback to simple mark
+      const rect = range.getBoundingClientRect();
+      const el = document.createElement('mark');
+      el.id = 'sch-hl-temp';
+      el.textContent = text;
+      range.deleteContents();
+      range.insertNode(el);
+    }
+    // scroll into view
+    const el = document.getElementById("sch-hl-temp");
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      // remove after 8 seconds
+      setTimeout(() => {
+        const e2 = document.getElementById("sch-hl-temp");
+        if (e2) {
+          // unwrap if possible
+          if (e2.tagName === 'SPAN' || e2.tagName === 'MARK') {
+            const parent = e2.parentNode;
+            while (e2.firstChild) parent.insertBefore(e2.firstChild, e2);
+            parent.removeChild(e2);
+          } else {
+            e2.remove();
+          }
+        }
+      }, 8000);
+    }
+  } catch (e) {
+    console.warn('highlightTextAndScroll error', e);
+  }
+}
